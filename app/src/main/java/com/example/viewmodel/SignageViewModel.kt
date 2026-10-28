@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.model.Android6HardwareTelemetry
-import com.example.model.FocusZone
 import com.example.model.KioskScreenMode
 import com.example.model.KioskSyncStatus
 import com.example.model.SignageCatalogRepository
@@ -12,17 +11,19 @@ import com.example.model.SignageLane
 import com.example.model.SignageMediaItem
 import com.example.model.TransitionEngineMode
 import com.example.player.GaplessSignagePlayerManager
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * Pure 2D Directional Navigation Rows (navigable strictly with UP, DOWN, LEFT, RIGHT):
+ * - Row 0: Top Minimalist Icon Bar (0: Fullscreen, 1: Play/Pause, 2: Pre-Cache, 3: Loop Mode, 4: Options)
+ * - Row 1: Hero Live Video Stage (0: Enter Fullscreen / Play, 1: Prev Track, 2: Next Track)
+ * - Row 2: Media Lane 0 (Cards 0..3)
+ * - Row 3: Media Lane 1 (Cards 0..3)
+ */
 data class SignageUiState(
     val lanes: List<SignageLane> = SignageCatalogRepository.lanes,
     val allItems: List<SignageMediaItem> = SignageCatalogRepository.allItems,
@@ -32,24 +33,17 @@ data class SignageUiState(
     val syncStatus: KioskSyncStatus = KioskSyncStatus.LIVE_HEALTHY,
     val transitionMode: TransitionEngineMode = TransitionEngineMode.GAPLESS_QUEUE,
     val telemetry: Android6HardwareTelemetry = Android6HardwareTelemetry(),
-    val focusZone: FocusZone = FocusZone.PLAYLIST_LANES,
-    val focusedTopActionIndex: Int = 0, // 0: Launch Fullscreen, 1: Pre-Warm Cache, 2: Transition Mode, 3: Kiosk Options
-    val focusedLaneIndex: Int = 0,
-    val focusedCardIndex: Int = 0,
+    // 2D Grid Coordinates for Dashboard (row: 0..3, col: 0..N)
+    val focusRow: Int = 1, // Starts directly on the Hero Video Stage for immediate Fullscreen or navigation
+    val focusCol: Int = 0,
+    // Fullscreen minimalist overlay state (reachable via UP/DOWN/LEFT/RIGHT)
+    val isFullscreenHudVisible: Boolean = false,
+    val fullscreenHudIndex: Int = 0, // 0: Exit Fullscreen, 1: Prev, 2: Play/Pause, 3: Next, 4: Options
+    // Minimalist Modal state
     val isModalOpen: Boolean = false,
-    val focusedModalIndex: Int = 0, // Always defaults to 0 (Non-destructive Resume) per spec!
-    val showOverscanGuide: Boolean = false,
-    val liveClockText: String = "10:47:08 UTC",
-    val statusBannerMessage: String = "Android 6.0 Hardware SurfaceView & 150MB Ring Cache Active • 0ms Track Switch"
-) {
-    val focusedMediaItem: SignageMediaItem
-        get() {
-            val lane = lanes.getOrElse(focusedLaneIndex) { lanes.first() }
-            return lane.items.getOrElse(focusedCardIndex.coerceIn(0, lane.items.lastIndex)) {
-                lane.items.first()
-            }
-        }
-}
+    val focusedModalIndex: Int = 0, // 0: Resume (Safe Default), 1: Overscan Border, 2: Purge Cache, 3: Reset Loop
+    val showOverscanGuide: Boolean = false
+)
 
 class SignageViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -65,26 +59,14 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             _uiState.update { state ->
                 state.copy(
                     activePlayingItem = newItem,
-                    nextUpItem = all[nextIdx],
-                    statusBannerMessage = "Seamless VSYNC transition -> ${newItem.title} (0ms gap, 0 frames dropped)"
+                    nextUpItem = all[nextIdx]
                 )
             }
         }
     )
 
     init {
-        startClockTicker()
         observePlayerTelemetry()
-    }
-
-    private fun startClockTicker() {
-        viewModelScope.launch {
-            val sdf = SimpleDateFormat("HH:mm:ss 'LOCAL'", Locale.US)
-            while (isActive) {
-                _uiState.update { it.copy(liveClockText = sdf.format(Date())) }
-                delay(1_000L)
-            }
-        }
     }
 
     private fun observePlayerTelemetry() {
@@ -109,118 +91,115 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // --- 2D Coordinate Matrix D-Pad Navigation ---
+    private fun maxColForRow(state: SignageUiState, row: Int): Int {
+        return when (row) {
+            0 -> 4 // 5 minimalist top icon actions (0..4)
+            1 -> 2 // 3 hero video stage quick actions (0: Fullscreen, 1: Prev, 2: Next)
+            2 -> (state.lanes.getOrNull(0)?.items?.lastIndex ?: 3)
+            3 -> (state.lanes.getOrNull(1)?.items?.lastIndex ?: 3)
+            else -> 0
+        }
+    }
+
+    // --- Pure 4-Direction Navigation (UP, DOWN, LEFT, RIGHT) ---
 
     fun onDpadLeft() {
-        _uiState.update { state ->
-            if (state.isModalOpen) {
-                val nextIdx = (state.focusedModalIndex - 1).coerceAtLeast(0)
-                return@update state.copy(focusedModalIndex = nextIdx)
-            }
-            if (state.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
+        val current = _uiState.value
+        if (current.isModalOpen) {
+            _uiState.update { it.copy(focusedModalIndex = (it.focusedModalIndex - 1).coerceAtLeast(0)) }
+            return
+        }
+        if (current.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
+            if (current.isFullscreenHudVisible) {
+                _uiState.update {
+                    it.copy(fullscreenHudIndex = (it.fullscreenHudIndex - 1).coerceAtLeast(0))
+                }
+            } else {
+                // Direct instant 0ms switch to previous video when HUD is hidden
                 playerManager.stepToPreviousTrack()
-                return@update state
             }
-            when (state.focusZone) {
-                FocusZone.TOP_ACTIONS -> state.copy(
-                    focusedTopActionIndex = (state.focusedTopActionIndex - 1).coerceAtLeast(0)
-                )
-                FocusZone.PLAYLIST_LANES -> state.copy(
-                    focusedCardIndex = (state.focusedCardIndex - 1).coerceAtLeast(0)
-                )
-                FocusZone.MODAL_DIALOG -> state
-            }
+            return
+        }
+        _uiState.update { state ->
+            val maxCol = maxColForRow(state, state.focusRow)
+            val nextCol = if (state.focusCol > 0) state.focusCol - 1 else maxCol
+            state.copy(focusCol = nextCol)
         }
     }
 
     fun onDpadRight() {
-        _uiState.update { state ->
-            if (state.isModalOpen) {
-                val nextIdx = (state.focusedModalIndex + 1).coerceAtMost(3)
-                return@update state.copy(focusedModalIndex = nextIdx)
-            }
-            if (state.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
-                playerManager.stepToNextTrack()
-                return@update state
-            }
-            when (state.focusZone) {
-                FocusZone.TOP_ACTIONS -> state.copy(
-                    focusedTopActionIndex = (state.focusedTopActionIndex + 1).coerceAtMost(3)
-                )
-                FocusZone.PLAYLIST_LANES -> {
-                    val laneMax = state.lanes.getOrNull(state.focusedLaneIndex)?.items?.lastIndex ?: 0
-                    state.copy(
-                        focusedCardIndex = (state.focusedCardIndex + 1).coerceAtMost(laneMax)
-                    )
+        val current = _uiState.value
+        if (current.isModalOpen) {
+            _uiState.update { it.copy(focusedModalIndex = (it.focusedModalIndex + 1).coerceAtMost(3)) }
+            return
+        }
+        if (current.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
+            if (current.isFullscreenHudVisible) {
+                _uiState.update {
+                    it.copy(fullscreenHudIndex = (it.fullscreenHudIndex + 1).coerceAtMost(4))
                 }
-                FocusZone.MODAL_DIALOG -> state
+            } else {
+                // Direct instant 0ms switch to next video when HUD is hidden
+                playerManager.stepToNextTrack()
             }
+            return
+        }
+        _uiState.update { state ->
+            val maxCol = maxColForRow(state, state.focusRow)
+            val nextCol = if (state.focusCol < maxCol) state.focusCol + 1 else 0
+            state.copy(focusCol = nextCol)
         }
     }
 
     fun onDpadUp() {
+        val current = _uiState.value
+        if (current.isModalOpen) {
+            _uiState.update { it.copy(focusedModalIndex = (it.focusedModalIndex - 2).coerceAtLeast(0)) }
+            return
+        }
+        if (current.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
+            if (!current.isFullscreenHudVisible) {
+                // Pressing UP in Fullscreen reveals the minimalist icon bar
+                _uiState.update { it.copy(isFullscreenHudVisible = true, fullscreenHudIndex = 0) }
+            } else {
+                // Pressing UP again when HUD is already open exits Fullscreen back to Grid
+                exitFullscreenPlayback()
+            }
+            return
+        }
         _uiState.update { state ->
-            if (state.isModalOpen) {
-                val nextIdx = (state.focusedModalIndex - 1).coerceAtLeast(0)
-                return@update state.copy(focusedModalIndex = nextIdx)
-            }
-            if (state.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
-                return@update state
-            }
-            when (state.focusZone) {
-                FocusZone.TOP_ACTIONS -> state
-                FocusZone.PLAYLIST_LANES -> {
-                    if (state.focusedLaneIndex > 0) {
-                        val prevLaneIdx = state.focusedLaneIndex - 1
-                        val prevLaneMax = state.lanes[prevLaneIdx].items.lastIndex
-                        state.copy(
-                            focusedLaneIndex = prevLaneIdx,
-                            focusedCardIndex = state.focusedCardIndex.coerceAtMost(prevLaneMax)
-                        )
-                    } else {
-                        state.copy(
-                            focusZone = FocusZone.TOP_ACTIONS,
-                            focusedTopActionIndex = state.focusedCardIndex.coerceIn(0, 3)
-                        )
-                    }
-                }
-                FocusZone.MODAL_DIALOG -> state
-            }
+            val targetRow = (state.focusRow - 1).coerceAtLeast(0)
+            val maxCol = maxColForRow(state, targetRow)
+            state.copy(
+                focusRow = targetRow,
+                focusCol = state.focusCol.coerceAtMost(maxCol)
+            )
         }
     }
 
     fun onDpadDown() {
+        val current = _uiState.value
+        if (current.isModalOpen) {
+            _uiState.update { it.copy(focusedModalIndex = (it.focusedModalIndex + 2).coerceAtMost(3)) }
+            return
+        }
+        if (current.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
+            if (current.isFullscreenHudVisible) {
+                // Pressing DOWN hides the Fullscreen icon bar for pure unobstructed video
+                _uiState.update { it.copy(isFullscreenHudVisible = false) }
+            } else {
+                // Pressing DOWN when HUD is hidden reveals the HUD focused on Play/Pause
+                _uiState.update { it.copy(isFullscreenHudVisible = true, fullscreenHudIndex = 2) }
+            }
+            return
+        }
         _uiState.update { state ->
-            if (state.isModalOpen) {
-                val nextIdx = (state.focusedModalIndex + 1).coerceAtMost(3)
-                return@update state.copy(focusedModalIndex = nextIdx)
-            }
-            if (state.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
-                return@update state
-            }
-            when (state.focusZone) {
-                FocusZone.TOP_ACTIONS -> {
-                    val firstLaneMax = state.lanes.firstOrNull()?.items?.lastIndex ?: 0
-                    state.copy(
-                        focusZone = FocusZone.PLAYLIST_LANES,
-                        focusedLaneIndex = 0,
-                        focusedCardIndex = state.focusedTopActionIndex.coerceAtMost(firstLaneMax)
-                    )
-                }
-                FocusZone.PLAYLIST_LANES -> {
-                    if (state.focusedLaneIndex < state.lanes.lastIndex) {
-                        val nextLaneIdx = state.focusedLaneIndex + 1
-                        val nextLaneMax = state.lanes[nextLaneIdx].items.lastIndex
-                        state.copy(
-                            focusedLaneIndex = nextLaneIdx,
-                            focusedCardIndex = state.focusedCardIndex.coerceAtMost(nextLaneMax)
-                        )
-                    } else {
-                        state
-                    }
-                }
-                FocusZone.MODAL_DIALOG -> state
-            }
+            val targetRow = (state.focusRow + 1).coerceAtMost(3)
+            val maxCol = maxColForRow(state, targetRow)
+            state.copy(
+                focusRow = targetRow,
+                focusCol = state.focusCol.coerceAtMost(maxCol)
+            )
         }
     }
 
@@ -231,34 +210,59 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         if (state.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
-            playerManager.togglePlayPause()
+            if (!state.isFullscreenHudVisible) {
+                // Pressing OK on unobstructed fullscreen toggles minimal HUD
+                _uiState.update { it.copy(isFullscreenHudVisible = true, fullscreenHudIndex = 2) }
+            } else {
+                executeFullscreenHudAction(state.fullscreenHudIndex)
+            }
             return
         }
-        when (state.focusZone) {
-            FocusZone.TOP_ACTIONS -> executeTopAction(state.focusedTopActionIndex)
-            FocusZone.PLAYLIST_LANES -> {
-                val targetItem = state.focusedMediaItem
-                if (state.activePlayingItem.id == targetItem.id) {
-                    // Pressing OK on already playing item enters Fullscreen 1080p Kiosk Video Mode
+
+        when (state.focusRow) {
+            0 -> executeTopAction(state.focusCol)
+            1 -> executeHeroAction(state.focusCol)
+            2, 3 -> {
+                val laneIdx = state.focusRow - 2
+                val lane = state.lanes.getOrNull(laneIdx) ?: return
+                val item = lane.items.getOrNull(state.focusCol.coerceIn(0, lane.items.lastIndex)) ?: return
+                if (state.activePlayingItem.id == item.id) {
                     enterFullscreenPlayback()
                 } else {
-                    selectAndPlayMediaItem(targetItem)
+                    selectAndPlayMediaItem(item, laneIdx, state.focusCol)
                 }
             }
-            FocusZone.MODAL_DIALOG -> executeModalAction(state.focusedModalIndex)
+        }
+    }
+
+    fun executeHeroAction(colIndex: Int) {
+        _uiState.update { it.copy(focusRow = 1, focusCol = colIndex.coerceIn(0, 2)) }
+        when (colIndex) {
+            0 -> enterFullscreenPlayback()
+            1 -> playerManager.stepToPreviousTrack()
+            2 -> playerManager.stepToNextTrack()
+        }
+    }
+
+    fun executeFullscreenHudAction(hudIndex: Int) {
+        _uiState.update { it.copy(fullscreenHudIndex = hudIndex.coerceIn(0, 4)) }
+        when (hudIndex) {
+            0 -> exitFullscreenPlayback()
+            1 -> playerManager.stepToPreviousTrack()
+            2 -> playerManager.togglePlayPause()
+            3 -> playerManager.stepToNextTrack()
+            4 -> onMenuKey()
         }
     }
 
     fun onMenuKey() {
         _uiState.update { state ->
             if (state.isModalOpen) {
-                state.copy(isModalOpen = false, focusZone = FocusZone.PLAYLIST_LANES)
+                state.copy(isModalOpen = false)
             } else {
-                // Spec requirement: "All actions inside modals default D-pad focus to the non-destructive action"
                 state.copy(
                     isModalOpen = true,
-                    focusZone = FocusZone.MODAL_DIALOG,
-                    focusedModalIndex = 0
+                    focusedModalIndex = 0 // Default to safe Resume option
                 )
             }
         }
@@ -267,17 +271,19 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
     fun onBackKey(): Boolean {
         val state = _uiState.value
         if (state.isModalOpen) {
-            _uiState.update { it.copy(isModalOpen = false, focusZone = FocusZone.PLAYLIST_LANES) }
+            _uiState.update { it.copy(isModalOpen = false) }
             return true
         }
         if (state.screenMode == KioskScreenMode.FULLSCREEN_PLAYBACK) {
-            exitFullscreenPlayback()
+            if (state.isFullscreenHudVisible) {
+                _uiState.update { it.copy(isFullscreenHudVisible = false) }
+            } else {
+                exitFullscreenPlayback()
+            }
             return true
         }
         return false
     }
-
-    // --- Direct Actions & Card Selection ---
 
     fun selectAndPlayMediaItem(item: SignageMediaItem, laneIndex: Int? = null, cardIndex: Int? = null) {
         playerManager.selectTrackById(item.id)
@@ -285,9 +291,8 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
             val resolvedLaneIdx = laneIndex ?: state.lanes.indexOfFirst { it.id == item.laneId }.coerceAtLeast(0)
             val resolvedCardIdx = cardIndex ?: state.lanes.getOrNull(resolvedLaneIdx)?.items?.indexOfFirst { it.id == item.id }?.coerceAtLeast(0) ?: 0
             state.copy(
-                focusZone = FocusZone.PLAYLIST_LANES,
-                focusedLaneIndex = resolvedLaneIdx,
-                focusedCardIndex = resolvedCardIdx,
+                focusRow = resolvedLaneIdx + 2,
+                focusCol = resolvedCardIdx,
                 activePlayingItem = item
             )
         }
@@ -297,7 +302,7 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update {
             it.copy(
                 screenMode = KioskScreenMode.FULLSCREEN_PLAYBACK,
-                statusBannerMessage = "Fullscreen 1080p Kiosk Loop Active • Gapless Ring Buffer Locked"
+                isFullscreenHudVisible = false
             )
         }
     }
@@ -306,102 +311,71 @@ class SignageViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update {
             it.copy(
                 screenMode = KioskScreenMode.DASHBOARD_10FT,
-                statusBannerMessage = "Returned to 10-Foot Command Dashboard • Background Playback Uninterrupted"
+                isFullscreenHudVisible = false
             )
         }
     }
 
     fun executeTopAction(actionIndex: Int) {
-        _uiState.update { it.copy(focusZone = FocusZone.TOP_ACTIONS, focusedTopActionIndex = actionIndex) }
+        _uiState.update { it.copy(focusRow = 0, focusCol = actionIndex.coerceIn(0, 4)) }
         when (actionIndex) {
             0 -> enterFullscreenPlayback()
-            1 -> {
-                playerManager.prewarmPlaylistSegmentsInBackground()
-                _uiState.update {
-                    it.copy(
-                        syncStatus = KioskSyncStatus.LIVE_HEALTHY,
-                        statusBannerMessage = "Pre-warmed all 8 playlist headers (768KB GOP keyframes) into Local Flash Cache"
-                    )
-                }
-            }
+            1 -> playerManager.togglePlayPause()
             2 -> {
+                playerManager.prewarmPlaylistSegmentsInBackground()
+                _uiState.update { it.copy(syncStatus = KioskSyncStatus.LIVE_HEALTHY) }
+            }
+            3 -> {
                 _uiState.update { state ->
                     val nextMode = if (state.transitionMode == TransitionEngineMode.GAPLESS_QUEUE) {
                         TransitionEngineMode.INSTANT_FRAME_HOLD
                     } else {
                         TransitionEngineMode.GAPLESS_QUEUE
                     }
-                    state.copy(
-                        transitionMode = nextMode,
-                        statusBannerMessage = "Transition Engine switched to: ${nextMode.title}"
-                    )
+                    state.copy(transitionMode = nextMode)
                 }
             }
-            3 -> onMenuKey()
+            4 -> onMenuKey()
         }
     }
 
     fun executeModalAction(modalButtonIndex: Int) {
         when (modalButtonIndex) {
             0 -> {
-                // Non-destructive default action: Resume Kiosk Playback
-                _uiState.update {
-                    it.copy(
-                        isModalOpen = false,
-                        focusZone = FocusZone.PLAYLIST_LANES,
-                        statusBannerMessage = "Kiosk Override closed • Playback continuing seamlessly"
-                    )
-                }
+                _uiState.update { it.copy(isModalOpen = false) }
             }
             1 -> {
-                // Non-destructive utility: Toggle Overscan Safe Zone Border Guide
                 _uiState.update { state ->
                     val enabled = !state.showOverscanGuide
                     state.copy(
                         showOverscanGuide = enabled,
                         telemetry = state.telemetry.copy(overscanSafeZoneEnabled = enabled),
-                        isModalOpen = false,
-                        focusZone = FocusZone.PLAYLIST_LANES,
-                        statusBannerMessage = if (enabled) {
-                            "Title-Safe Overscan Guide (4rem / 64px) ENABLED"
-                        } else {
-                            "Title-Safe Overscan Guide DISABLED"
-                        }
+                        isModalOpen = false
                     )
                 }
             }
             2 -> {
-                // Destructive action 1: Purge & Rebuild Local Flash Cache
                 playerManager.purgeAndRebuildCache()
                 _uiState.update {
                     it.copy(
                         isModalOpen = false,
-                        focusZone = FocusZone.PLAYLIST_LANES,
-                        syncStatus = KioskSyncStatus.DEGRADED_SYNCING,
-                        statusBannerMessage = "Cache Purged • Re-warming 150MB Android 6 Flash Ring Buffer..."
+                        syncStatus = KioskSyncStatus.DEGRADED_SYNCING
                     )
                 }
             }
             3 -> {
-                // Destructive action 2: Restart Kiosk Node Sequence
                 val firstItem = SignageCatalogRepository.allItems.first()
                 playerManager.selectTrackById(firstItem.id)
                 _uiState.update {
                     it.copy(
                         isModalOpen = false,
-                        focusZone = FocusZone.PLAYLIST_LANES,
-                        focusedLaneIndex = 0,
-                        focusedCardIndex = 0,
-                        syncStatus = KioskSyncStatus.LIVE_HEALTHY,
-                        statusBannerMessage = "Kiosk Node 04-A Sequence Reset to Track #01 (Zero Surface Teardown)"
+                        focusRow = 2,
+                        focusCol = 0,
+                        syncStatus = KioskSyncStatus.LIVE_HEALTHY
                     )
                 }
             }
         }
-    }
-
-    fun focusModalOption(index: Int) {
-        _uiState.update { it.copy(focusedModalIndex = index.coerceIn(0, 3)) }
     }
 
     override fun onCleared() {

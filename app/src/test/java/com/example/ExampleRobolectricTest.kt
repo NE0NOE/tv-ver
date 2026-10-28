@@ -25,31 +25,38 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `dpad navigation and modal default focus behavior`() {
+    fun `pure 4-direction dpad navigation and fullscreen mode`() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val viewModel = SignageViewModel(app)
 
-        // Verify initial state starts on lane 0, card 0
-        assertEquals(0, viewModel.uiState.value.focusedLaneIndex)
-        assertEquals(0, viewModel.uiState.value.focusedCardIndex)
+        // Starts on Row 1 (Hero Stage), Col 0 (Fullscreen Trigger)
+        assertEquals(1, viewModel.uiState.value.focusRow)
+        assertEquals(0, viewModel.uiState.value.focusCol)
 
-        // Move focus right along carousel lane
+        // Pressing UP moves to Row 0 (Minimalist Top Icon Bar)
+        viewModel.onDpadUp()
+        assertEquals(0, viewModel.uiState.value.focusRow)
+
+        // Pressing RIGHT moves across all top icons (0..4)
         viewModel.onDpadRight()
-        assertEquals(1, viewModel.uiState.value.focusedCardIndex)
+        assertEquals(1, viewModel.uiState.value.focusCol)
 
-        // Open Kiosk Options modal via MENU key and verify focus defaults to non-destructive index 0
-        viewModel.onMenuKey()
-        assertTrue(viewModel.uiState.value.isModalOpen)
-        assertEquals(0, viewModel.uiState.value.focusedModalIndex)
+        // Pressing DOWN twice moves to Row 2 (First Carousel Lane)
+        viewModel.onDpadDown()
+        viewModel.onDpadDown()
+        assertEquals(2, viewModel.uiState.value.focusRow)
 
-        // Pressing OK on default modal button closes modal safely
-        viewModel.onDpadOk()
-        assertFalse(viewModel.uiState.value.isModalOpen)
-
-        // Enter Fullscreen Kiosk Video Playback Mode and step out via BACK
+        // Enter Fullscreen Mode and navigate purely with UP/DOWN/LEFT/RIGHT
         viewModel.enterFullscreenPlayback()
         assertEquals(KioskScreenMode.FULLSCREEN_PLAYBACK, viewModel.uiState.value.screenMode)
-        viewModel.onBackKey()
+        assertFalse(viewModel.uiState.value.isFullscreenHudVisible)
+
+        // Pressing UP in Fullscreen reveals the minimalist icon HUD
+        viewModel.onDpadUp()
+        assertTrue(viewModel.uiState.value.isFullscreenHudVisible)
+
+        // Pressing UP again exits Fullscreen back to the Dashboard
+        viewModel.onDpadUp()
         assertEquals(KioskScreenMode.DASHBOARD_10FT, viewModel.uiState.value.screenMode)
     }
 }

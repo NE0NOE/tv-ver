@@ -14,16 +14,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -40,7 +37,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
@@ -53,24 +49,16 @@ import com.example.model.SignageMediaItem
 import com.example.model.TransitionEngineMode
 import com.example.player.GaplessSignagePlayerManager
 import com.example.ui.theme.ApexInactiveTileBorder
-import com.example.ui.theme.ApexPrimaryHighLum
 import com.example.ui.theme.ApexPrimaryMauve
-import com.example.ui.theme.ApexSecondaryContainer
 import com.example.ui.theme.ApexSurface
 import com.example.ui.theme.ApexSurfaceContainerLow
-import com.example.ui.theme.ApexTertiaryLight
 import com.example.ui.theme.ApexTertiaryLive
-import com.example.ui.theme.ApexTertiaryLiveTint
-import com.example.ui.theme.ApexTextMutedMetadata
 import com.example.ui.theme.ApexTextPrimary
 
 /**
- * Hardware-Accelerated Gapless Video Stage optimized for Android 6.0 (API 23/24) TV chipsets:
- * - Uses PlayerView with `setKeepContentOnPlayerReset(true)` and transparent shutter so there is
- *   NEVER a black flash or loading screen between videos.
- * - Pre-loads the next item's poster & initial GOP keyframes in the background.
- * - Zero buffering spinner policy: even if a stream is warming up or running in an offline kiosk,
- *   the pre-cached high-contrast visual frame + kinetic broadcast telemetry layer stays locked at 60fps.
+ * Ultra-Minimalist Hardware-Accelerated Gapless Video Stage for Android 6.0 TV:
+ * - Zero text clutter, zero control overlays, zero loading screen between videos.
+ * - Uses PlayerView with `setKeepContentOnPlayerReset(true)` and transparent shutter.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -83,20 +71,16 @@ fun GaplessVideoStage(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val hasRenderedFrame by playerManager.hasRenderedFrame.collectAsState()
-    val bufferHealth by playerManager.bufferHealthPercent.collectAsState()
     val nextPrewarmedPct by playerManager.nextTrackPrewarmedPercent.collectAsState()
     val positionSec by playerManager.currentPositionSec.collectAsState()
     val durationSec by playerManager.currentDurationSec.collectAsState()
-    val seamlessSwitches by playerManager.seamlessSwitchCount.collectAsState()
-    val isPlaying by playerManager.isPlaying.collectAsState()
 
     val infiniteTransition = rememberInfiniteTransition(label = "scanline")
     val sweepProgress by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 6000, easing = LinearEasing),
+            animation = tween(durationMillis = 7000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "sweep"
@@ -107,11 +91,11 @@ fun GaplessVideoStage(
             .background(ApexSurfaceContainerLow)
             .testTag("gapless_video_stage")
     ) {
-        // Layer 1: Pre-Decoded Zero-Latency Frame Shield (Instant visual availability; prevents black flash)
+        // 1. Pre-Decoded Frame Shield (Prevents any black flash or loading screen between videos)
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(activeItem.thumbnailUrl)
-                .crossfade(false) // Zero alpha blend cost on Android 6 GPU
+                .crossfade(false)
                 .memoryCachePolicy(CachePolicy.ENABLED)
                 .diskCachePolicy(CachePolicy.ENABLED)
                 .build(),
@@ -120,18 +104,18 @@ fun GaplessVideoStage(
             modifier = Modifier.fillMaxSize()
         )
 
-        // Subtle kinetic architectural telemetry vector grid (zero GPU overdraw, crisp 1px lines)
+        // Subtle animated vertical pulse line for offline/fallback visual continuity
         Canvas(modifier = Modifier.fillMaxSize()) {
             val scanX = size.width * sweepProgress
             drawLine(
-                color = Color(activeItem.accentHex).copy(alpha = 0.45f),
+                color = Color(activeItem.accentHex).copy(alpha = 0.35f),
                 start = Offset(scanX, 0f),
                 end = Offset(scanX, size.height),
                 strokeWidth = 2.dp.toPx()
             )
         }
 
-        // Layer 2: Hidden 1x1 Warm Pre-Decoder for Next Track Thumbnail in Coil RAM Cache
+        // 2. Hidden 1dp Pre-Decoder warming the next video's frame in RAM
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(nextUpItem.thumbnailUrl)
@@ -143,16 +127,13 @@ fun GaplessVideoStage(
             modifier = Modifier.size(1.dp)
         )
 
-        // Layer 3: Native ExoPlayer SurfaceView with Shutter Disabled & Frame Hold Enabled
+        // 3. Hardware SurfaceView with Shutter Disabled & Last-Frame Hold Enabled
         if (playerManager.exoPlayer != null) {
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
                         useController = false
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        // CRITICAL for eliminating loading screen between videos on Android 6:
-                        // Keeps the last rendered video frame on the surface during media transition
-                        // and disables the black shutter overlay!
                         setKeepContentOnPlayerReset(true)
                         setShutterBackgroundColor(AndroidColor.TRANSPARENT)
                         layoutParams = ViewGroup.LayoutParams(
@@ -171,7 +152,7 @@ fun GaplessVideoStage(
             )
         }
 
-        // Layer 4: Top-Left Broadcast Telemetry Pill (Zero-Buffering Guarantee Status)
+        // 4. Minimalist Live Indicator Dot (Top-Left, no text)
         Row(
             modifier = Modifier
                 .align(Alignment.TopStart)
@@ -180,146 +161,48 @@ fun GaplessVideoStage(
             verticalAlignment = Alignment.CenterVertically
         ) {
             ActivePlaybackPill()
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(ApexSurface.copy(alpha = 0.88f))
-                    .border(1.dp, ApexInactiveTileBorder, RoundedCornerShape(999.dp))
-                    .padding(horizontal = 12.dp, vertical = 5.dp)
-            ) {
-                Text(
-                    text = if (hasRenderedFrame) {
-                        "HW DECODER LOCKED • 0ms SWITCHES: $seamlessSwitches"
-                    } else {
-                        "FRAME-HOLD SHIELD ACTIVE • BUFFER $bufferHealth%"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = ApexTextPrimary
-                )
-            }
-
-            if (isFullscreen) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(ApexTertiaryLiveTint.copy(alpha = 0.92f))
-                        .border(1.dp, ApexTertiaryLive, RoundedCornerShape(999.dp))
-                        .padding(horizontal = 12.dp, vertical = 5.dp)
-                ) {
-                    Text(
-                        text = transitionMode.title.uppercase(),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = ApexTertiaryLight
-                    )
-                }
-            }
         }
 
-        // Layer 5: Top-Right Next-Up Pre-Buffer Readiness Chip (Proves next video is already loaded!)
-        Row(
+        // 5. Minimalist Compact Timestamp Pill (Bottom-Right)
+        Box(
             modifier = Modifier
-                .align(Alignment.TopEnd)
+                .align(Alignment.BottomEnd)
                 .padding(14.dp)
                 .clip(RoundedCornerShape(999.dp))
-                .background(ApexSurface.copy(alpha = 0.90f))
-                .border(1.dp, ApexPrimaryMauve, RoundedCornerShape(999.dp))
-                .padding(horizontal = 12.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .background(ApexSurface.copy(alpha = 0.82f))
+                .border(1.dp, ApexInactiveTileBorder.copy(alpha = 0.6f), RoundedCornerShape(999.dp))
+                .padding(horizontal = 10.dp, vertical = 4.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(ApexTertiaryLive)
-            )
+            val posFormatted = String.format("%02d:%02d", positionSec / 60, positionSec % 60)
             Text(
-                text = "NEXT PRE-BUFFERED ($nextPrewarmedPct%): ${nextUpItem.zoneName}",
-                style = MaterialTheme.typography.labelMedium,
-                color = ApexPrimaryHighLum,
-                maxLines = 1
+                text = posFormatted,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = ApexTextPrimary
             )
         }
 
-        // Layer 6: Bottom Kiosk Timecode & Seamless Progress Bar
-        Column(
+        // 6. Ultra-Thin 3dp Bottom Edge Progress & Pre-Buffer Line
+        val progressFraction = (positionSec.toFloat() / durationSec.coerceAtLeast(1).toFloat())
+            .coerceIn(0.04f, 1f)
+        Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(ApexSurface.copy(alpha = 0.88f))
-                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .height(3.dp)
+                .background(ApexSurfaceContainerLow.copy(alpha = 0.6f))
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = activeItem.title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = ApexTextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${activeItem.zoneName} • ${activeItem.codecInfo} • ${activeItem.bitrateMbps}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = ApexTextMutedMetadata,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Tabular Inter numerical readout for timecode & buffer
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(ApexSecondaryContainer)
-                        .border(1.dp, ApexInactiveTileBorder, RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    val posFormatted = String.format("%02d:%02d", positionSec / 60, positionSec % 60)
-                    val durFormatted = String.format("%02d:%02d", durationSec / 60, durationSec % 60)
-                    val playStateLabel = if (isPlaying) "PLAY" else "PAUSE"
-                    Text(
-                        text = "$playStateLabel  $posFormatted / $durFormatted",
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                        color = ApexTextPrimary
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Dual-layer progress bar: Pre-buffered segment (Lavender) + Active playback head (Dusty Mauve)
-            val progressFraction = (positionSec.toFloat() / durationSec.coerceAtLeast(1).toFloat())
-                .coerceIn(0.05f, 1f)
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(ApexSurfaceContainerLow)
-            ) {
-                // Pre-buffer bar (always ahead of playback head)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth((nextPrewarmedPct / 100f).coerceIn(0.85f, 1f))
-                        .fillMaxHeight()
-                        .background(ApexTertiaryLive.copy(alpha = 0.45f))
-                )
-                // Active playback progress bar
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progressFraction)
-                        .fillMaxHeight()
-                        .background(ApexPrimaryMauve)
-                )
-            }
+                    .fillMaxWidth((nextPrewarmedPct / 100f).coerceIn(0.85f, 1f))
+                    .fillMaxHeight()
+                    .background(ApexTertiaryLive.copy(alpha = 0.4f))
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progressFraction)
+                    .fillMaxHeight()
+                    .background(ApexPrimaryMauve)
+            )
         }
     }
 }
