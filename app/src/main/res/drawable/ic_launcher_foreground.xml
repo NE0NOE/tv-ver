@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer TV Kiosk Bezel Ring -->
+    <path
+        android:fillColor="#966A84"
+        android:pathData="M26,32 C26,28.69 28.69,26 32,26 L76,26 C79.31,26 82,28.69 82,32 L82,66 C82,69.31 79.31,72 76,72 L60,72 L64,80 L44,80 L48,72 L32,72 C28.69,72 26,69.31 26,66 Z" />
+    <!-- Inner Screen Cutout -->
+    <path
+        android:fillColor="#171214"
+        android:pathData="M31,31 L77,31 L77,67 L31,67 Z" />
+    <!-- Play Triangle + Broadcast Wave -->
+    <path
+        android:fillColor="#EBB8D5"
+        android:pathData="M46,39 L66,49 L46,59 Z" />
+</vector>

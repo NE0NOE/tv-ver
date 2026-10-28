@@ -1,0 +1,6 @@
+{
+  "name": "Apex Signage",
+  "description": "10-Foot Digital Signage Kiosk & Gapless Video Playback Engine optimized for Android TV and legacy Android 6 SoC hardware.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

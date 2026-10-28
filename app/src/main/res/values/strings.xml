@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">Apex Signage</string>
+    <string name="kiosk_endpoint_title">APEX SIGNAGE // KIOSK NODE 04-A</string>
+    <string name="status_live">LIVE STREAM SYNC</string>
+    <string name="status_degraded">BUFFER PRESSURE</string>
+    <string name="status_offline">OFFLINE CACHE</string>
+    <string name="legend_ok">Play / Select</string>
+    <string name="legend_dpad">Move Focus</string>
+    <string name="legend_menu">Kiosk Options</string>
+    <string name="legend_back">Return to Dashboard</string>
+    <string name="action_launch_seamless">Launch Seamless Kiosk Loop</string>
+    <string name="action_preload_cache">Warm Up Next-Segment Cache</string>
+    <string name="action_kiosk_settings">Hardware &amp; Buffer Tuning</string>
+    <string name="cd_media_thumbnail">Media item thumbnail</string>
+    <string name="cd_status_indicator">System health status indicator</string>
+    <string name="cd_playback_active">Currently playing media item</string>
+</resources>
